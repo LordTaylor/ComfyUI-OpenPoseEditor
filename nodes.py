@@ -1,7 +1,4 @@
 import os
-import base64
-import io
-import json
 import torch
 import numpy as np
 from PIL import Image
@@ -50,8 +47,9 @@ class OpenPoseEditorNode:
             path = os.path.join(input_dir, filename)
             if not os.path.exists(path):
                 return torch.zeros(1, h, w, 3)
-            img = Image.open(path).convert("RGB")
-            arr = np.array(img).astype(np.float32) / 255.0
+            with Image.open(path) as img:
+                img_rgb = img.convert("RGB").resize((w, h), Image.LANCZOS)
+            arr = np.array(img_rgb).astype(np.float32) / 255.0
             return torch.from_numpy(arr).unsqueeze(0)
 
         pose  = load_image(pose_file,  width, height)
