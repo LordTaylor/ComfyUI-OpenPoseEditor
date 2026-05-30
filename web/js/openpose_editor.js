@@ -57,7 +57,9 @@ async function waitForEditorReady(iframeWin, retries = 40) {
 function dataUrlToBlob(dataUrl) {
     if (!dataUrl || !dataUrl.includes(",")) throw new Error("Invalid data URL");
     const [header, data] = dataUrl.split(",");
-    const mime = header.match(/:(.*?);/)[1];
+    const mimeMatch = header.match(/:(.*?);/);
+    if (!mimeMatch) throw new Error("Invalid data URL mime");
+    const mime = mimeMatch[1];
     const bytes = atob(data);
     const arr = new Uint8Array(bytes.length);
     for (let i = 0; i < bytes.length; i++) arr[i] = bytes.charCodeAt(i);
@@ -268,7 +270,10 @@ function openPoseEditorModal(node) {
     };
 
     // Auto-capture on close
+    let closing = false;
     const doCloseAndSave = async () => {
+        if (closing) return;
+        closing = true;
         closeBtn.disabled = true;
         try {
             await captureFromEditor(iframe, node, (msg) => setStatus(msg, "#FFA500"));
@@ -276,6 +281,7 @@ function openPoseEditorModal(node) {
         } catch (err) {
             console.error("[OpenPoseEditor] capture error:", err);
             setStatus(`⚠ ${err.message}`, "#f44");
+            closing = false;
             closeBtn.disabled = false;
             return; // Don't close on error — let user retry
         }
@@ -298,7 +304,7 @@ function openPoseEditorModal(node) {
 // ─── Intercept Queue Prompt ────────────────────────────────────────────────────
 // If any editor modal is open when user queues, auto-capture first.
 
-if (!app.queuePrompt.__openpose_patched) {
+if (!app.queuePrompt?.__openpose_patched) {
 const _origQueuePrompt = app.queuePrompt.bind(app);
 app.queuePrompt = async function (number, batchCount) {
     if (openEditors.size > 0) {
