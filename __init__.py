@@ -14,8 +14,9 @@ routes = PromptServer.instance.routes
 
 async def _serve_static(request):
     filename = request.match_info["filename"]
-    filepath = os.path.join(STATIC_DIR, filename)
-    if not os.path.exists(filepath) or not os.path.isfile(filepath):
+    static_root = os.path.realpath(STATIC_DIR)
+    filepath = os.path.realpath(os.path.join(STATIC_DIR, filename))
+    if not filepath.startswith(static_root + os.sep) or not os.path.isfile(filepath):
         raise web.HTTPNotFound()
     return web.FileResponse(filepath)
 

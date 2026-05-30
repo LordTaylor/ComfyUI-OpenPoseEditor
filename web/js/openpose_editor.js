@@ -13,7 +13,7 @@ const openEditors = new Map();
 function invokeEditorCommand(iframeWin, method, payload = []) {
     iframeWin.postMessage(
         { cmd: "openpose-3d", method, type: "call", payload },
-        "*"
+        window.location.origin
     );
 }
 
@@ -25,6 +25,7 @@ function waitForEditorMessage(method, types = ["return", "event"], timeoutMs = 5
         }, timeoutMs);
 
         function handler(e) {
+            if (e.origin !== window.location.origin) return;
             const d = e.data;
             if (d?.cmd === "openpose-3d" && d?.method === method && types.includes(d?.type)) {
                 clearTimeout(timer);
@@ -54,6 +55,7 @@ async function waitForEditorReady(iframeWin, retries = 40) {
 // ─── Image upload ──────────────────────────────────────────────────────────────
 
 function dataUrlToBlob(dataUrl) {
+    if (!dataUrl || !dataUrl.includes(",")) throw new Error("Invalid data URL");
     const [header, data] = dataUrl.split(",");
     const mime = header.match(/:(.*?);/)[1];
     const bytes = atob(data);
@@ -68,14 +70,17 @@ async function uploadImage(dataUrl, filename) {
     form.append("image", blob, filename);
     form.append("overwrite", "true");
     const resp = await api.fetchApi("/upload/image", { method: "POST", body: form });
+    if (!resp.ok) throw new Error(`Upload failed: ${resp.status}`);
     const json = await resp.json();
+    if (!json.name) throw new Error("Upload response missing filename");
     return json.name;
 }
 
 // ─── Random pose via DOM injection (SetRandomPose not in postMessage API) ─────
 
 async function triggerSetRandomPose(iframeWin) {
-    const doc = iframeWin.document;
+    let doc;
+    try { doc = iframeWin.document; } catch { return false; }
 
     // Find a leaf element with exact text "Set Random Pose" (already visible or in open menu)
     const findAndClick = () => {
@@ -229,8 +234,15 @@ function openPoseEditorModal(node) {
     overlay.appendChild(container);
     document.body.appendChild(overlay);
 
-    // Register this editor
+    // Register this editor; clean up if node is removed while modal is open
     openEditors.set(nodeId, { iframe, node });
+    const origOnRemoved = node.onRemoved?.bind(node);
+    node.onRemoved = () => {
+        openEditors.delete(nodeId);
+        overlay.remove();
+        document.removeEventListener("keydown", keyHandler);
+        origOnRemoved?.();
+    };
 
     iframe.onload = async () => {
         const ready = await waitForEditorReady(iframe.contentWindow);
@@ -272,9 +284,13 @@ function openPoseEditorModal(node) {
     };
 
     closeBtn.onclick = doCloseAndSave;
-    // ESC key also saves
+    // ESC key also saves — disable button synchronously to prevent concurrent calls
     const keyHandler = (e) => {
-        if (e.key === "Escape") { document.removeEventListener("keydown", keyHandler); doCloseAndSave(); }
+        if (e.key === "Escape") {
+            document.removeEventListener("keydown", keyHandler);
+            closeBtn.disabled = true;
+            doCloseAndSave();
+        }
     };
     document.addEventListener("keydown", keyHandler);
 }
@@ -282,6 +298,7 @@ function openPoseEditorModal(node) {
 // ─── Intercept Queue Prompt ────────────────────────────────────────────────────
 // If any editor modal is open when user queues, auto-capture first.
 
+if (!app.queuePrompt.__openpose_patched) {
 const _origQueuePrompt = app.queuePrompt.bind(app);
 app.queuePrompt = async function (number, batchCount) {
     if (openEditors.size > 0) {
@@ -295,6 +312,8 @@ app.queuePrompt = async function (number, batchCount) {
     }
     return _origQueuePrompt(number, batchCount);
 };
+app.queuePrompt.__openpose_patched = true;
+}
 
 // ─── Extension registration ────────────────────────────────────────────────────
 
